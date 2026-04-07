@@ -1,0 +1,710 @@
+# =============================================================================
+# packages/cec.yaml
+# HDMI-CEC Gateway - Home Assistant Package
+# =============================================================================
+#
+# Einbinden in configuration.yaml:
+#   homeassistant:
+#     packages:
+#       cec: !include packages/cec.yaml
+#
+# Voraussetzung: hdmi-cec-gateway.yaml auf dem ESP geflasht
+#
+# EINMALIG ANPASSEN:
+#   Den MAC-Suffix in allen Scripts anpassen.
+#   Aktuell: esphome.hdmi_cec_gateway_4dbde0_cec_send
+#   Den genauen Namen findest du unter:
+#   HA - Entwicklerwerkzeuge - Aktionen - nach "esphome" suchen
+#   Dann alle Vorkommen von "4dbde0" durch deinen MAC ersetzen.
+#   Betrifft: script.cec_send, script.cec_scan_start
+#
+# CEC-Adressen:
+#   0   = TV
+#   3   = Tuner / Receiver (z.B. Sat-Receiver an HDMI 1)
+#   4   = Playback Device (SLWF-08 selbst)
+#   5   = Audio System (Soundbar)
+#   15  = Broadcast (alle Geraete) = 0xF
+#
+# HDMI-Eingang - physische Adressen:
+#   HDMI 1 = [0x10, 0x00]
+#   HDMI 2 = [0x20, 0x00]
+#   HDMI 3 = [0x30, 0x00]
+#   HDMI 4 = [0x40, 0x00]
+#
+# Lautstaerke:
+#   Philips (EasyLink): destination: 0  (direkt an TV)
+#   Samsung (Anynet+):  destination: 15 (Broadcast)
+#   TV-Modell ueber input_select.cec_tv_model auswaehlen,
+#   Scripts cec_volume_up/down/mute passen sich automatisch an.
+#
+# Raw-Format der CEC-Events:
+#   '(source<<4|dest):opcode:data...' z.B. '30:04'
+#   Das Opcode-Byte liegt immer an raw[3:5].
+#   Die Automationen prüfen nur den Opcode – funktioniert für jedes
+#   Gerät an jedem HDMI-Port das die entsprechenden Befehle sendet.
+#
+# Geräte-Scan:
+#   script.cec_scan_start startet einen sequenziellen Scan aller
+#   logischen Adressen 0–14 (je 300 ms). Der ESP pingt jede Adresse
+#   mit 0x83 (Give Physical Address). Antworten werden als Events
+#   gesammelt und in input_text.cec_scan_results angezeigt.
+#   Events:
+#     esphome.cec_scan_started  – Scan gestartet (Reset der Liste)
+#     esphome.cec_scan_result   – Gerät gefunden
+#       Felder: logical_address, physical_address, device_type
+#     esphome.cec_scan_finished – Alle 15 Adressen abgefragt
+# =============================================================================
+
+# =============================================================================
+# INPUT SELECT - TV-Modell auswählen (optional, für Lautstärke-Unterschied)
+# =============================================================================
+input_select:
+  cec_tv_model:
+    name: "CEC TV Modell"
+    options:
+      - Philips
+      - Samsung
+    initial: Philips
+    icon: mdi:television
+
+# =============================================================================
+# INPUT BOOLEAN - Bus-Log
+# =============================================================================
+input_boolean:
+  cec_bus_log_enabled:
+    name: "CEC Bus-Log aktiv"
+    icon: mdi:broadcast
+
+# =============================================================================
+# INPUT TEXT - Scan-Ergebnisse
+# =============================================================================
+input_text:
+  cec_scan_results:
+    name: "CEC Scan Ergebnisse"
+    max: 255
+    icon: mdi:format-list-bulleted
+  cec_scan_status:
+    name: "CEC Scan Status"
+    max: 50
+    icon: mdi:magnify
+
+# =============================================================================
+# SCRIPTS
+# =============================================================================
+script:
+
+  # ---------------------------------------------------------------------------
+  # HELPER: Einziger Ort wo der Service-Name steht → nur hier anpassen!
+  # ---------------------------------------------------------------------------
+  cec_send:
+    alias: "CEC - Senden (intern)"
+    fields:
+      destination:
+        description: "CEC Zieladresse (0=TV, 15=Broadcast, ...)"
+        example: "0"
+      data:
+        description: "CEC Daten als Liste"
+        example: "[0x04]"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send  # ← HIER MAC-Suffix anpassen!
+        data:
+          destination: "{{ destination }}"
+          data: "{{ data }}"
+
+  # ---------------------------------------------------------------------------
+  # SCAN
+  # ---------------------------------------------------------------------------
+  cec_scan_start:
+    alias: "CEC - Scan starten"
+    sequence:
+      - action: button.press
+        target:
+          entity_id: button.hdmi_cec_gateway_4dbde0_cec_scan  # ← MAC-Suffix anpassen!
+
+  # ---------------------------------------------------------------------------
+  # POWER
+  # ---------------------------------------------------------------------------
+  cec_tv_on:
+    alias: "CEC - TV einschalten"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x04]          # Image View On
+
+  cec_standby_all:
+    alias: "CEC - Alles in Standby"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x36]          # Standby Broadcast
+
+  # ---------------------------------------------------------------------------
+  # LAUTSTÄRKE - automatisch je nach gewähltem TV-Modell
+  # Philips: direkt an TV (0), Samsung: Broadcast (15)
+  # ---------------------------------------------------------------------------
+  cec_volume_up:
+    alias: "CEC - Lautstärke Hoch"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x44, 0x41]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]
+
+  cec_volume_down:
+    alias: "CEC - Lautstärke Runter"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x44, 0x42]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]
+
+  cec_mute:
+    alias: "CEC - Stummschalten"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x44, 0x43]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # HDMI-EINGANG WECHSELN (Philips + Samsung gleich)
+  # Inactive Source vor Active Source verhindert Routing-Probleme
+  # ---------------------------------------------------------------------------
+  cec_hdmi1:
+    alias: "CEC - HDMI 1 wählen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]   # Inactive Source (Gateway in HDMI 3)
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x10, 0x00]   # Active Source: HDMI 1
+
+  cec_hdmi2:
+    alias: "CEC - HDMI 2 wählen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x20, 0x00]   # Active Source: HDMI 2
+
+  cec_hdmi3:
+    alias: "CEC - HDMI 3 wählen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x30, 0x00]   # Active Source: HDMI 3 (kein Inactive nötig)
+
+  cec_hdmi4:
+    alias: "CEC - HDMI 4 wählen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x40, 0x00]   # Active Source: HDMI 4
+
+  # ---------------------------------------------------------------------------
+  # NAVIGATION
+  # ---------------------------------------------------------------------------
+  cec_nav_up:
+    alias: "CEC - Pfeil Hoch"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x01]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_down:
+    alias: "CEC - Pfeil Runter"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x02]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_left:
+    alias: "CEC - Pfeil Links"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x03]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_right:
+    alias: "CEC - Pfeil Rechts"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x04]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_ok:
+    alias: "CEC - OK / Enter"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x00]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_back:
+    alias: "CEC - Zurück"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x0D]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_home:
+    alias: "CEC - Home"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x10]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_menu:
+    alias: "CEC - Menü"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x09]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_info:
+    alias: "CEC - Info"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x35]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # WIEDERGABE
+  # ---------------------------------------------------------------------------
+  cec_play:
+    alias: "CEC - Play"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x44]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_pause:
+    alias: "CEC - Pause"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x46]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_stop:
+    alias: "CEC - Stop"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x45]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_forward:
+    alias: "CEC - Vorspulen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x49]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_rewind:
+    alias: "CEC - Zurückspulen"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x48]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_next:
+    alias: "CEC - Nächster Titel"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x4B]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_previous:
+    alias: "CEC - Vorheriger Titel"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x4C]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # ZAHLENTASTEN
+  # ---------------------------------------------------------------------------
+  cec_key_0:
+    alias: "CEC - Taste 0"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x20]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_1:
+    alias: "CEC - Taste 1"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x21]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_2:
+    alias: "CEC - Taste 2"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x22]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_3:
+    alias: "CEC - Taste 3"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x23]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_4:
+    alias: "CEC - Taste 4"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x24]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_5:
+    alias: "CEC - Taste 5"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x25]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_6:
+    alias: "CEC - Taste 6"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x26]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_7:
+    alias: "CEC - Taste 7"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x27]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_8:
+    alias: "CEC - Taste 8"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x28]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_9:
+    alias: "CEC - Taste 9"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x29]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # FARBTASTEN
+  # ---------------------------------------------------------------------------
+  cec_key_red:
+    alias: "CEC - Rot"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x72]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_green:
+    alias: "CEC - Grün"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x73]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_yellow:
+    alias: "CEC - Gelb"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x74]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_blue:
+    alias: "CEC - Blau"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x71]
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+# =============================================================================
+# AUTOMATIONS
+# =============================================================================
+automation:
+
+  # Bedingung prüft den readable-String auf den dekodierten Befehlsnamen –
+  # zuverlässiger als raw[3:5], da unabhängig von Header-Format-Variationen.
+
+  - id: cec_tv_standby_detected
+    alias: "CEC - TV geht in Standby"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_rx
+    condition:
+      - condition: template
+        value_template: "{{ '<Standby>' in trigger.event.data.readable }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "CEC"
+          message: "TV geht in Standby"
+
+  - id: cec_tv_on_detected
+    alias: "CEC - TV wurde eingeschaltet"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_rx
+    condition:
+      - condition: template
+        value_template: "{{ '<Image View On>' in trigger.event.data.readable }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "CEC"
+          message: "TV wurde eingeschaltet"
+
+  # ---------------------------------------------------------------------------
+  # SCAN-AUTOMATIONEN
+  # ---------------------------------------------------------------------------
+  - id: cec_scan_reset
+    alias: "CEC Scan - Reset"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_started
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_results
+        data:
+          value: ""
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_status
+        data:
+          value: "Scanning... (0–14)"
+
+  - id: cec_scan_collect
+    alias: "CEC Scan - Gerät gefunden"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_result
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_results
+        data:
+          value: >-
+            {% set prev = states('input_text.cec_scan_results') %}
+            {% set addr = trigger.event.data.logical_address %}
+            {% set phys = trigger.event.data.physical_address %}
+            {% set dtype = trigger.event.data.device_type %}
+            {% set line = "Addr " ~ addr ~ " | " ~ phys ~ " | " ~ dtype %}
+            {% if ("Addr " ~ addr ~ " |") in prev %}
+              {{ prev }}
+            {% elif prev != "" %}
+              {{ prev + "\n" + line }}
+            {% else %}
+              {{ line }}
+            {% endif %}
+
+  - id: cec_scan_finished
+    alias: "CEC Scan - Abgeschlossen"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_finished
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_status
+        data:
+          value: "Scan abgeschlossen"
+      - action: persistent_notification.create
+        data:
+          title: "CEC Scan"
+          message: "{{ states('input_text.cec_scan_results') }}"
+
+  # ---------------------------------------------------------------------------
+  # BUS-LOG
+  # ---------------------------------------------------------------------------
+  # sensor.cec_readable wird bei jeder Nachricht aktualisiert.
+  # Das Logbook von HA speichert den gesamten Verlauf automatisch.
+  # Die Automationen cec_bus_log_collect / cec_bus_log_clear entfallen.
