@@ -1,0 +1,226 @@
+substitutions:
+  name: "hdmi-cec-gateway"
+  friendly_name: "⚡️ HDMI CEC Gateway"
+  project_name: "SMLIGHT.SLWF-08-HDMI"
+  project_version: "2.0-Gateway"
+  # HDMI-Port des SLWF-08 – NUR HIER anpassen:
+  #   hdmi_phys_addr: 0x1000=HDMI1, 0x2000=HDMI2, 0x3000=HDMI3, 0x4000=HDMI4
+  #   hdmi_phys_hi:   0x10=HDMI1,   0x20=HDMI2,   0x30=HDMI3,   0x40=HDMI4
+  hdmi_phys_addr: "0x3000"
+  hdmi_phys_hi: "0x30"
+  hdmi_phys_lo: "0x00"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  name_add_mac_suffix: true
+  project:
+    name: "${project_name}"
+    version: "${project_version}"
+  platformio_options:
+    board_build.f_cpu: 160000000L
+
+esp8266:
+  board: esp12e
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid_1
+      password: !secret wifi_password_1
+  ap:
+    ssid: "HDMI-CEC-AP"
+    password: !secret ap_password
+  min_auth_mode: WPA2
+  fast_connect: true
+  power_save_mode: none
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  services:
+    - service: cec_send
+      variables:
+        destination: int
+        data: int[]
+      then:
+        - hdmi_cec.send:
+            destination: !lambda "return static_cast<unsigned char>(destination);"
+            data: !lambda |-
+              std::vector<unsigned char> v;
+              for (int i : data) v.push_back(static_cast<unsigned char>(i));
+              return v;
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+web_server:
+  port: 80
+  auth:
+    username: !secret web_user
+    password: !secret web_password
+
+logger:
+
+# Fork von Palakis/esphome-native-hdmi-cec mit Frame::to_string() Support
+external_components:
+  - source: github://DocBig/esphome-native-hdmi-cec@main
+    refresh: 1d
+
+# ---------------------------------------------------------------------------
+# Scan-Zustand
+# ---------------------------------------------------------------------------
+globals:
+  - id: scan_running
+    type: bool
+    initial_value: 'false'
+  - id: scan_address
+    type: int
+    initial_value: '0'
+
+interval:
+  - interval: 300ms
+    then:
+      - if:
+          condition:
+            lambda: 'return id(scan_running);'
+          then:
+            - if:
+                condition:
+                  lambda: 'return id(scan_address) <= 14;'
+                then:
+                  - hdmi_cec.send:
+                      destination: !lambda 'return (uint8_t)id(scan_address);'
+                      data: [0x83]
+                  - lambda: 'id(scan_address)++;'
+                else:
+                  - lambda: 'id(scan_running) = false;'
+                  - homeassistant.event:
+                      event: esphome.cec_scan_finished
+
+# ---------------------------------------------------------------------------
+# HDMI-CEC Gateway
+# HDMI-Port nur über die Substitutions oben anpassen (hdmi_phys_addr / hdmi_phys_hi)
+# ---------------------------------------------------------------------------
+hdmi_cec:
+  pin: GPIO14
+  address: 0x04
+  physical_address: ${hdmi_phys_addr}
+  osd_name: "CEC-Gateway"
+  promiscuous_mode: true
+  monitor_mode: false
+  on_message:
+    # --- Physical Address beantworten ---
+    - opcode: 0x83
+      then:
+        - if:
+            condition:
+              lambda: 'return destination == 0x04 || destination == 0x0F;'
+            then:
+              - hdmi_cec.send:
+                  destination: 0x0F
+                  data: [0x84, "${hdmi_phys_hi}", "${hdmi_phys_lo}", 0x04]
+
+    # --- Vendor ID beantworten ---
+    - opcode: 0x8C
+      then:
+        - if:
+            condition:
+              lambda: 'return destination == 0x04 || destination == 0x0F;'
+            then:
+              - hdmi_cec.send:
+                  destination: 0x0F
+                  data: [0x87, 0x00, 0x00, 0x00]
+
+    # --- OSD Name beantworten ---
+    - opcode: 0x46
+      then:
+        - hdmi_cec.send:
+            destination: !lambda return source;
+            data: [0x47, 0x43, 0x45, 0x43, 0x2D, 0x47, 0x57]
+
+    # --- Power Status beantworten ---
+    - opcode: 0x8F
+      then:
+        - hdmi_cec.send:
+            destination: !lambda return source;
+            data: [0x90, 0x00]
+
+    # --- Scan: Physical Address Antwort auswerten ---
+    - opcode: 0x84
+      then:
+        - homeassistant.event:
+            event: esphome.cec_scan_result
+            data:
+              logical_address: !lambda 'return source;'
+              physical_address: !lambda |-
+                if (data.size() >= 3) {
+                  char buf[10];
+                  snprintf(buf, sizeof(buf), "%d.%d.%d.%d",
+                    (data[1] >> 4) & 0xF, data[1] & 0xF,
+                    (data[2] >> 4) & 0xF, data[2] & 0xF);
+                  return std::string(buf);
+                }
+                return std::string("?");
+              device_type: !lambda |-
+                if (data.size() >= 4) {
+                  const char* t[] = {"TV","Recording","Reserved","Tuner","Playback","AudioSystem","Switch","VideoProc"};
+                  int i = data[3];
+                  if (i >= 0 && i <= 7) return std::string(t[i]);
+                }
+                return std::string("Unknown");
+
+    # --- Alle Nachrichten als HA-Event weiterleiten ---
+    - then:
+        - homeassistant.event:
+            event: esphome.cec_rx
+            data:
+              source: !lambda 'return source;'
+              destination: !lambda 'return destination;'
+              raw: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string(true);'
+              readable: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string();'
+        - lambda: |-
+            hdmi_cec::Frame frame = hdmi_cec::Frame(source, destination, data);
+            id(cec_raw).publish_state(frame.to_string(true));
+            id(cec_readable).publish_state(frame.to_string());
+
+# ---------------------------------------------------------------------------
+# Sensoren
+# ---------------------------------------------------------------------------
+text_sensor:
+  - platform: template
+    name: "CEC Raw"
+    id: cec_raw
+    update_interval: never
+
+  - platform: template
+    name: "CEC Readable"
+    id: cec_readable
+    update_interval: never
+
+# ---------------------------------------------------------------------------
+# Buttons
+# ---------------------------------------------------------------------------
+button:
+  - platform: template
+    name: "CEC Scan"
+    on_press:
+      - lambda: |-
+          id(scan_address) = 0;
+          id(scan_running) = true;
+      - homeassistant.event:
+          event: esphome.cec_scan_started
+
+# ---------------------------------------------------------------------------
+# Backlight Neopixel (OPTIONAL – auskommentieren wenn kein LED-Strip angeschlossen)
+# Anzahl der LEDs anpassen (num_leds)
+# ---------------------------------------------------------------------------
+light:
+  - platform: neopixelbus
+    type: GRB
+    variant: WS2812X
+    pin: GPIO12
+    num_leds: 60
+    name: "TV backlight"
