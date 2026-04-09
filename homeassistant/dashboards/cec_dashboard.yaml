@@ -1,0 +1,548 @@
+title: CEC Fernbedienung
+# ============================================================
+# MAC-SUFFIX ANPASSEN:
+# Ersetze "4dbde0" durch den MAC-Suffix deines SLWF-08.
+# Betrifft: sensor.hdmi_cec_gateway_4dbde0_cec_raw
+#           sensor.hdmi_cec_gateway_4dbde0_cec_readable
+# Den Suffix findest du unter:
+# HA → Einstellungen → Geräte & Dienste → ESPHome
+# ============================================================
+views:
+  - title: CEC Control
+    icon: mdi:television-remote
+    cards:
+
+      # ========================================================
+      # POWER
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## ⏻ Power"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: TV einschalten
+                icon: mdi:television-play
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_tv_on
+              - type: button
+                name: Alles Standby
+                icon: mdi:power-sleep
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_standby_all
+
+      # ========================================================
+      # TV MODELL
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 📺 TV Modell"
+          - type: entity
+            entity: input_select.cec_tv_model
+            name: TV Modell auswählen
+
+      # ========================================================
+      # LAUTSTÄRKE
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 🔊 Lautstärke"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Lauter
+                icon: mdi:volume-plus
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_volume_up
+              - type: button
+                name: Leiser
+                icon: mdi:volume-minus
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_volume_down
+              - type: button
+                name: Stumm
+                icon: mdi:volume-mute
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_mute
+
+      # ========================================================
+      # HDMI EINGANG
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 🔌 HDMI Eingang"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: HDMI 1
+                icon: mdi:numeric-1-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_hdmi1
+              - type: button
+                name: HDMI 2
+                icon: mdi:numeric-2-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_hdmi2
+              - type: button
+                name: HDMI 3
+                icon: mdi:numeric-3-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_hdmi3
+              - type: button
+                name: HDMI 4
+                icon: mdi:numeric-4-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_hdmi4
+
+      # ========================================================
+      # NAVIGATION
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 🕹️ Navigation"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: ""
+                icon: mdi:blank
+                tap_action:
+                  action: none
+              - type: button
+                name: Hoch
+                icon: mdi:arrow-up
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_up
+              - type: button
+                name: ""
+                icon: mdi:blank
+                tap_action:
+                  action: none
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Links
+                icon: mdi:arrow-left
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_left
+              - type: button
+                name: OK
+                icon: mdi:check-circle
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_ok
+              - type: button
+                name: Rechts
+                icon: mdi:arrow-right
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_right
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: ""
+                icon: mdi:blank
+                tap_action:
+                  action: none
+              - type: button
+                name: Runter
+                icon: mdi:arrow-down
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_down
+              - type: button
+                name: ""
+                icon: mdi:blank
+                tap_action:
+                  action: none
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Zurück
+                icon: mdi:arrow-left-circle
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_back
+              - type: button
+                name: Home
+                icon: mdi:home
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_home
+              - type: button
+                name: Menü
+                icon: mdi:menu
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_menu
+              - type: button
+                name: Info
+                icon: mdi:information
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_nav_info
+
+      # ========================================================
+      # WIEDERGABE
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## ▶️ Wiedergabe"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: ""
+                icon: mdi:skip-previous
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_previous
+              - type: button
+                name: ""
+                icon: mdi:rewind
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_rewind
+              - type: button
+                name: ""
+                icon: mdi:play
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_play
+              - type: button
+                name: ""
+                icon: mdi:pause
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_pause
+              - type: button
+                name: ""
+                icon: mdi:stop
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_stop
+              - type: button
+                name: ""
+                icon: mdi:fast-forward
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_forward
+              - type: button
+                name: ""
+                icon: mdi:skip-next
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_next
+
+      # ========================================================
+      # ZAHLENTASTEN
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 🔢 Zahlentasten"
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: "1"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_1
+              - type: button
+                name: "2"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_2
+              - type: button
+                name: "3"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_3
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: "4"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_4
+              - type: button
+                name: "5"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_5
+              - type: button
+                name: "6"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_6
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: "7"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_7
+              - type: button
+                name: "8"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_8
+              - type: button
+                name: "9"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_9
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: ""
+                tap_action:
+                  action: none
+              - type: button
+                name: "0"
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_0
+              - type: button
+                name: ""
+                tap_action:
+                  action: none
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: "🔴"
+                icon: mdi:circle
+                icon_color: red
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_red
+              - type: button
+                name: "🟢"
+                icon: mdi:circle
+                icon_color: green
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_green
+              - type: button
+                name: "🟡"
+                icon: mdi:circle
+                icon_color: yellow
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_yellow
+              - type: button
+                name: "🔵"
+                icon: mdi:circle
+                icon_color: blue
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_key_blue
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: "P+"
+                icon: mdi:chevron-up-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_channel_up
+              - type: button
+                name: "P-"
+                icon: mdi:chevron-down-box
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_channel_down
+
+      # ========================================================
+      # SEPARATOR
+      # ========================================================
+      - type: markdown
+        content: |
+          ---
+          ### 🔧 Diagnose & Bus-Monitor
+
+      # ========================================================
+      # CEC SCAN
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 🔍 CEC Geräte-Scan"
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: input_text.cec_scan_status
+                state_not: "Scan abgeschlossen"
+              - condition: state
+                entity: input_text.cec_scan_status
+                state_not: ""
+            card:
+              type: markdown
+              content: >
+                ⏳ **Scan läuft – bitte keine Befehle senden!**
+          - type: horizontal-stack
+            cards:
+              - type: button
+                name: Scan starten
+                icon: mdi:magnify-scan
+                tap_action:
+                  action: perform-action
+                  perform_action: script.turn_on
+                  target:
+                    entity_id: script.cec_scan_start
+              - type: entity
+                entity: input_text.cec_scan_status
+                name: Status
+          - type: markdown
+            content: |
+              {% set results = states('input_text.cec_scan_results') %}
+              {% if results not in ('unknown', '') %}
+              | Addr | Physisch | Typ |
+              |------|----------|-----|
+              {% for line in results.split('\n') %}
+              {% set parts = line.split(' | ') %}
+              | {{ parts[0] | replace('Addr ', '') }} | {{ parts[1] if parts|length > 1 else '?' }} | {{ parts[2] if parts|length > 2 else '?' }} |
+              {% endfor %}
+              {% else %}
+              *Noch kein Scan durchgeführt*
+              {% endif %}
+          - type: markdown
+            content: |
+              <details><summary>Adress-Referenz</summary>
+
+              | Addr | Typ |
+              |------|-----|
+              | 0 | TV |
+              | 1–2 | Recording |
+              | 3 | Tuner 1 |
+              | 4 | Playback 1 (Gateway) |
+              | 5 | Audio System |
+              | 6–7 | Tuner 2–3 |
+              | 8 | Playback 2 |
+              | 9 | Recording 3 |
+              | 10–14 | weitere Geräte |
+
+              </details>
+
+      # ========================================================
+      # CEC LOG
+      # ========================================================
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "## 📋 CEC Log"
+          - type: entities
+            entities:
+              - entity: sensor.hdmi_cec_gateway_4dbde0_cec_raw
+                name: Raw
+              - entity: sensor.hdmi_cec_gateway_4dbde0_cec_readable
+                name: Lesbar
+              - entity: input_boolean.cec_bus_log_enabled
+                name: Bus-Log anzeigen
+                toggle: true
+          - type: conditional
+            conditions:
+              - entity: input_boolean.cec_bus_log_enabled
+                state: "on"
+            card:
+              type: logbook
+              title: "CEC Bus-Log (letzte Stunde)"
+              entities:
+                - sensor.hdmi_cec_gateway_4dbde0_cec_readable
+              hours_to_show: 1
