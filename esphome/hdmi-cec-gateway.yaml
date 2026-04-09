@@ -46,6 +46,7 @@ api:
         data: int[]
       then:
         - hdmi_cec.send:
+            source: 0x04
             destination: !lambda "return static_cast<unsigned char>(destination);"
             data: !lambda |-
               std::vector<unsigned char> v;
@@ -92,6 +93,7 @@ interval:
                   lambda: 'return id(scan_address) <= 14;'
                 then:
                   - hdmi_cec.send:
+                      source: 0x04
                       destination: !lambda 'return (uint8_t)id(scan_address);'
                       data: [0x83]
                   - lambda: 'id(scan_address)++;'
@@ -120,6 +122,7 @@ hdmi_cec:
               lambda: 'return destination == 0x04 || destination == 0x0F;'
             then:
               - hdmi_cec.send:
+                  source: 0x04
                   destination: 0x0F
                   data: [0x84, "${hdmi_phys_hi}", "${hdmi_phys_lo}", 0x04]
 
@@ -131,22 +134,33 @@ hdmi_cec:
               lambda: 'return destination == 0x04 || destination == 0x0F;'
             then:
               - hdmi_cec.send:
+                  source: 0x04
                   destination: 0x0F
                   data: [0x87, 0x00, 0x00, 0x00]
 
     # --- OSD Name beantworten ---
     - opcode: 0x46
       then:
-        - hdmi_cec.send:
-            destination: !lambda return source;
-            data: [0x47, 0x43, 0x45, 0x43, 0x2D, 0x47, 0x57]
+        - if:
+            condition:
+              lambda: 'return destination == 0x04 || destination == 0x0F;'
+            then:
+              - hdmi_cec.send:
+                  source: 0x04
+                  destination: !lambda return source;
+                  data: [0x47, 0x43, 0x45, 0x43, 0x2D, 0x47, 0x57]
 
     # --- Power Status beantworten ---
     - opcode: 0x8F
       then:
-        - hdmi_cec.send:
-            destination: !lambda return source;
-            data: [0x90, 0x00]
+        - if:
+            condition:
+              lambda: 'return destination == 0x04 || destination == 0x0F;'
+            then:
+              - hdmi_cec.send:
+                  source: 0x04
+                  destination: !lambda return source;
+                  data: [0x90, 0x00]
 
     # --- Scan: Physical Address Antwort auswerten ---
     - opcode: 0x84
@@ -172,19 +186,25 @@ hdmi_cec:
                 }
                 return std::string("Unknown");
 
-    # --- Alle Nachrichten als HA-Event weiterleiten ---
+    # --- Alle Nachrichten als Text-Sensor + optional als HA-Event weiterleiten ---
+    # Das cec_rx-Event wird nur gefeuert wenn der Bus-Log aktiv ist (input_boolean.cec_bus_log_enabled).
+    # Das reduziert WiFi-Pakete auf dem ESP8266 und verhindert Hänger bei schnellem CEC-Bustraffic.
     - then:
-        - homeassistant.event:
-            event: esphome.cec_rx
-            data:
-              source: !lambda 'return source;'
-              destination: !lambda 'return destination;'
-              raw: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string(true);'
-              readable: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string();'
         - lambda: |-
             hdmi_cec::Frame frame = hdmi_cec::Frame(source, destination, data);
             id(cec_raw).publish_state(frame.to_string(true));
             id(cec_readable).publish_state(frame.to_string());
+        - if:
+            condition:
+              lambda: 'return id(cec_bus_log_active).state;'
+            then:
+              - homeassistant.event:
+                  event: esphome.cec_rx
+                  data:
+                    source: !lambda 'return source;'
+                    destination: !lambda 'return destination;'
+                    raw: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string(true);'
+                    readable: !lambda 'return hdmi_cec::Frame(source, destination, data).to_string();'
 
 # ---------------------------------------------------------------------------
 # Sensoren
@@ -199,6 +219,16 @@ text_sensor:
     name: "CEC Readable"
     id: cec_readable
     update_interval: never
+
+# ---------------------------------------------------------------------------
+# Switch – Bus-Log (gespiegelt von input_boolean.cec_bus_log_enabled in HA)
+# Nur wenn aktiv, wird das cec_rx-Event gefeuert → reduziert WiFi-Last auf dem ESP
+# ---------------------------------------------------------------------------
+binary_sensor:
+  - platform: homeassistant
+    id: cec_bus_log_active
+    entity_id: input_boolean.cec_bus_log_enabled
+    internal: true
 
 # ---------------------------------------------------------------------------
 # Buttons
@@ -217,10 +247,10 @@ button:
 # Backlight Neopixel (OPTIONAL – auskommentieren wenn kein LED-Strip angeschlossen)
 # Anzahl der LEDs anpassen (num_leds)
 # ---------------------------------------------------------------------------
-light:
-  - platform: neopixelbus
-    type: GRB
-    variant: WS2812X
-    pin: GPIO12
-    num_leds: 60
-    name: "TV backlight"
+#light:
+#  - platform: neopixelbus
+#    type: GRB
+#    variant: WS2812X
+#    pin: GPIO12
+#    num_leds: 60
+#    name: "TV backlight"
