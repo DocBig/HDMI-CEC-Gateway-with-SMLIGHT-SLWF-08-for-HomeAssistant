@@ -1,0 +1,780 @@
+# =============================================================================
+# packages/cec_english.yaml
+# HDMI-CEC Gateway - Home Assistant Package
+# =============================================================================
+#
+# To include in configuration.yaml:
+#   homeassistant:
+#     packages:
+#       cec: !include packages/cec.yaml
+#
+# Requirement: hdmi-cec-gateway.yaml must be flashed on the ESP
+#
+# ONE-TIME SETUP:
+#   Adjust the MAC suffix in all scripts.
+#   Current example: esphome.hdmi_cec_gateway_4dbde0_cec_send
+#   Find the exact entity name in:
+#   HA - Developer Tools - Services - search for "esphome"
+#   Then replace all occurrences of "4dbde0" with your device's MAC suffix.
+#   Affects: script.cec_send, script.cec_scan_start
+#
+# CHANGES (2025-04-17):
+#   - Added cec_tv_off script (direct TV standby)
+#   - Fixed volume opcodes: now using 0x71 (Report Audio Status) for all TVs
+#   - Samsung TV: broadcasts to destination 15, Philips: direct to 0
+#   - Tested with Philips (EasyLink) and Samsung (Anynet+)
+#
+# CEC logical addresses:
+#   0   = TV
+#   3   = Tuner / Receiver (e.g. Sat receiver on HDMI 1)
+#   4   = Playback Device (the SLWF-08 itself)
+#   5   = Audio System (soundbar)
+#   15  = Broadcast (all devices) = 0xF
+#
+# HDMI input physical addresses:
+#   HDMI 1 = [0x10, 0x00]
+#   HDMI 2 = [0x20, 0x00]
+#   HDMI 3 = [0x30, 0x00]
+#   HDMI 4 = [0x40, 0x00]
+#
+# Volume handling:
+#   Philips (EasyLink): destination: 0  (sent directly to TV)
+#   Samsung (Anynet+):  destination: 15 (broadcast)
+#   Select your TV model via input_select.cec_tv_model.
+#   The volume scripts (cec_volume_up/down/mute) adapt automatically.
+#
+# Raw format of CEC events:
+#   '(source<<4|dest):opcode:data...' e.g. '30:04'
+#   The opcode byte is always at raw[3:5].
+#   Automations only check the opcode — this works for any
+#   device on any HDMI port that sends the corresponding commands.
+#
+# Device scan:
+#   script.cec_scan_start starts a sequential scan of logical addresses 0–14
+#   (approx. 300 ms per address). The ESP pings each address with 0x83
+#   (Give Physical Address). Responses are collected as events and shown in
+#   input_text.cec_scan_results.
+#   Events:
+#     esphome.cec_scan_started  – scan started (resets the list)
+#     esphome.cec_scan_result   – device found
+#       fields: logical_address, physical_address, device_type
+#     esphome.cec_scan_finished – all 15 addresses queried
+# =============================================================================
+
+# =============================================================================
+# ADJUST: Gateway HDMI port
+# If the SLWF-08 is NOT plugged into HDMI 3, the Inactive Source addresses
+# in the scripts cec_hdmi1, cec_hdmi2, cec_hdmi4 must be adjusted:
+#   HDMI 1: [0x9D, 0x10, 0x00]
+#   HDMI 2: [0x9D, 0x20, 0x00]
+#   HDMI 3: [0x9D, 0x30, 0x00]  ← default
+#   HDMI 4: [0x9D, 0x40, 0x00]
+# =============================================================================
+
+# =============================================================================
+# INPUT SELECT - choose TV model (optional; affects volume handling)
+# =============================================================================
+input_select:
+  cec_tv_model:
+    name: "CEC TV Modell"
+    options:
+      - Philips
+      - Samsung
+    initial: Philips
+    icon: mdi:television
+
+# =============================================================================
+# INPUT BOOLEAN - Bus log enable
+# =============================================================================
+input_boolean:
+  cec_bus_log_enabled:
+    name: "CEC Bus Log"
+    icon: mdi:broadcast
+
+# =============================================================================
+# INPUT TEXT - scan results
+# =============================================================================
+input_text:
+  cec_scan_results:
+    name: "CEC Scan Results"
+    max: 255
+    icon: mdi:format-list-bulleted
+  cec_scan_status:
+    name: "CEC Scan Status"
+    max: 50
+    icon: mdi:magnify
+
+# =============================================================================
+# SCRIPTS
+# =============================================================================
+script:
+
+  # ---------------------------------------------------------------------------
+  # HELPER: Single location for the service name → adjust only here!
+  # ---------------------------------------------------------------------------
+  cec_send:
+    alias: "CEC - Send (internal)"
+    mode: queued
+    fields:
+      destination:
+        description: "CEC destination address (0=TV, 15=Broadcast, ...)"
+        example: "0"
+      data:
+        description: "CEC data as list"
+        example: "[0x04]"
+    sequence:
+      - action: esphome.hdmi_cec_gateway_4dbde0_cec_send  # ← adjust MAC suffix here!
+        data:
+          destination: "{{ destination }}"
+          data: "{{ data }}"
+
+  # ---------------------------------------------------------------------------
+  # SCAN
+  # ---------------------------------------------------------------------------
+  cec_scan_start:
+    alias: "CEC - Start Scan"
+    sequence:
+      - action: button.press
+        target:
+          entity_id: button.hdmi_cec_gateway_4dbde0_cec_scan  # ← adjust MAC suffix here!
+
+  # ---------------------------------------------------------------------------
+  # POWER
+  # ---------------------------------------------------------------------------
+  cec_tv_on:
+    alias: "CEC - Turn TV On"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x04]          # Image View On
+
+  cec_tv_off:
+    alias: "CEC - Turn TV Off"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x36]          # Standby (direct to TV)
+
+  cec_standby_all:
+    alias: "CEC - Standby All"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x36]          # Standby Broadcast
+
+  # ---------------------------------------------------------------------------
+  # VOLUME - automatic depending on chosen TV model
+  # Philips: direct to TV (0), Samsung: Broadcast (15)
+  # Using 0x71 (Report Audio Status) for proper volume handling
+  # ---------------------------------------------------------------------------
+  cec_volume_up:
+    alias: "CEC - Volume Up"
+    sequence:
+      # Philips: 0x44, 0x41 | Samsung: 0x41, 0x00
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}
+              [0x41, 0x00]
+            {% else %}
+              [0x44, 0x41]
+            {% endif %}
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]                # Release für beide
+
+  cec_volume_down:
+    alias: "CEC - Volume Down"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}
+              [0x41, 0x01]
+            {% else %}
+              [0x44, 0x42]
+            {% endif %}
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]
+
+  cec_mute:
+    alias: "CEC - Mute"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}
+              [0x42, 0x00]
+            {% else %}
+              [0x44, 0x43]
+            {% endif %}
+      - action: script.cec_send
+        data:
+          destination: >
+            {% if is_state('input_select.cec_tv_model', 'Samsung') %}15{% else %}0{% endif %}
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # HDMI INPUT SWITCHING (Philips + Samsung identical)
+  # Sending Inactive Source before Active Source prevents routing issues
+  # ---------------------------------------------------------------------------
+  cec_hdmi1:
+    alias: "CEC - Select HDMI 1"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]   # Inactive Source (Gateway in HDMI 3)
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x10, 0x00]   # Active Source: HDMI 1
+
+  cec_hdmi2:
+    alias: "CEC - Select HDMI 2"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x20, 0x00]   # Active Source: HDMI 2
+
+  cec_hdmi3:
+    alias: "CEC - Select HDMI 3"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x30, 0x00]   # Active Source: HDMI 3 (no inactive needed)
+
+  cec_hdmi4:
+    alias: "CEC - Select HDMI 4"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x9D, 0x30, 0x00]
+      - action: script.cec_send
+        data:
+          destination: 15
+          data: [0x82, 0x40, 0x00]   # Active Source: HDMI 4
+
+  # ---------------------------------------------------------------------------
+  # NAVIGATION
+  # ---------------------------------------------------------------------------
+  cec_nav_up:
+    alias: "CEC - Arrow Up"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x01]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_down:
+    alias: "CEC - Arrow Down"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x02]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_left:
+    alias: "CEC - Arrow Left"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x03]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_right:
+    alias: "CEC - Arrow Right"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x04]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_ok:
+    alias: "CEC - OK / Enter"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x00]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_back:
+    alias: "CEC - Back"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x0D]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_home:
+    alias: "CEC - Home"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x10]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_menu:
+    alias: "CEC - Menu"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x09]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_nav_info:
+    alias: "CEC - Info"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x35]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # PLAYBACK (WIEDERGABE)
+  # ---------------------------------------------------------------------------
+  cec_play:
+    alias: "CEC - Play"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x44]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_pause:
+    alias: "CEC - Pause"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x46]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_stop:
+    alias: "CEC - Stop"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x45]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_forward:
+    alias: "CEC - Fast Forward"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x49]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_rewind:
+    alias: "CEC - Rewind"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x48]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_next:
+    alias: "CEC - Next Track"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x4B]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_previous:
+    alias: "CEC - Previous Track"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x4C]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # NUMERIC KEYS (ZAHLENTASTEN)
+  # ---------------------------------------------------------------------------
+  cec_key_0:
+    alias: "CEC - Key 0"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x20]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_1:
+    alias: "CEC - Key 1"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x21]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_2:
+    alias: "CEC - Key 2"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x22]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_3:
+    alias: "CEC - Key 3"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x23]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_4:
+    alias: "CEC - Key 4"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x24]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_5:
+    alias: "CEC - Key 5"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x25]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_6:
+    alias: "CEC - Key 6"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x26]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_7:
+    alias: "CEC - Key 7"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x27]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_8:
+    alias: "CEC - Key 8"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x28]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_9:
+    alias: "CEC - Key 9"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x29]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # CHANNEL (PROGRAMM)
+  # ---------------------------------------------------------------------------
+  cec_channel_up:
+    alias: "CEC - Channel Up"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x30]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_channel_down:
+    alias: "CEC - Channel Down"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x31]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  # ---------------------------------------------------------------------------
+  # COLOR BUTTONS (FARBTASTEN)
+  # ---------------------------------------------------------------------------
+  cec_key_red:
+    alias: "CEC - Red"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x72]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_green:
+    alias: "CEC - Green"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x73]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_yellow:
+    alias: "CEC - Yellow"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x74]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+  cec_key_blue:
+    alias: "CEC - Blue"
+    sequence:
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x44, 0x71]
+      - action: script.cec_send
+        data:
+          destination: 0
+          data: [0x45]
+
+# =============================================================================
+# AUTOMATIONS
+# =============================================================================
+automation:
+
+  # Condition checks the readable string for the decoded command name –
+  # more reliable than raw[3:5], since it's independent of header format variations.
+
+  - id: cec_tv_standby_detected
+    alias: "CEC - TV entering Standby"
+    # Trigger on text sensor instead of cec_rx event → reduces WiFi traffic from the ESP
+    trigger:
+      - platform: state
+        entity_id: sensor.hdmi_cec_gateway_4dbde0_cec_readable  # ← adjust MAC suffix here!
+    condition:
+      - condition: template
+        value_template: "{{ '<Standby>' in trigger.to_state.state }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "CEC"
+          message: "TV entering standby"
+
+  - id: cec_tv_on_detected
+    alias: "CEC - TV turned on"
+    # Trigger on text sensor instead of cec_rx event → reduces WiFi traffic from the ESP
+    trigger:
+      - platform: state
+        entity_id: sensor.hdmi_cec_gateway_4dbde0_cec_readable  # ← adjust MAC suffix here!
+    condition:
+      - condition: template
+        value_template: "{{ '<Image View On>' in trigger.to_state.state }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "CEC"
+          message: "TV turned on"
+
+  # ---------------------------------------------------------------------------
+  # SCAN AUTOMATIONS
+  # ---------------------------------------------------------------------------
+  - id: cec_scan_reset
+    alias: "CEC Scan - Reset"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_started
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_results
+        data:
+          value: ""
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_status
+        data:
+          value: "Scanning... (0–14)"
+
+  - id: cec_scan_collect
+    alias: "CEC Scan - Device Found"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_result
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_results
+        data:
+          value: >-
+            {% set prev = states('input_text.cec_scan_results') %}
+            {% set addr = trigger.event.data.logical_address %}
+            {% set phys = trigger.event.data.physical_address %}
+            {% set dtype = trigger.event.data.device_type %}
+            {% set line = "Addr " ~ addr ~ " | " ~ phys ~ " | " ~ dtype %}
+            {% if ("Addr " ~ addr ~ " |") in prev %}
+              {{ prev }}
+            {% elif prev != "" %}
+              {{ prev + "\n" + line }}
+            {% else %}
+              {{ line }}
+            {% endif %}
+
+  - id: cec_scan_finished
+    alias: "CEC Scan - Finished"
+    trigger:
+      - platform: event
+        event_type: esphome.cec_scan_finished
+    action:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.cec_scan_status
+        data:
+          value: "Scan finished"
+      - action: persistent_notification.create
+        data:
+          title: "CEC Scan"
+          message: "{{ states('input_text.cec_scan_results') }}"
+
+  # ---------------------------------------------------------------------------
+  # BUS LOG
+  # ---------------------------------------------------------------------------
+  # sensor.cec_readable is updated on every message.
+  # The Home Assistant logbook stores the full history automatically.
